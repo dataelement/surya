@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 from PIL import Image
 import numpy as np
+import copy
 
 from surya.detection import batch_detection
 from surya.postprocessing.heatmap import keep_largest_boxes, get_and_clean_boxes, get_detected_boxes
@@ -191,7 +192,7 @@ def parallel_get_regions(heatmaps: List[np.ndarray], orig_size, id2label, detect
 
 
 def batch_layout_detection(images: List, model, processor, detection_results: Optional[List[TextDetectionResult]] = None, batch_size=None, include_maps=False) -> List[LayoutResult]:
-    layout_generator = batch_detection(images, model, processor, batch_size=batch_size)
+    layout_generator = batch_detection(images, model, processor, batch_size=batch_size, static_cache=settings.LAYOUT_STATIC_CACHE)
     id2label = model.config.id2label
 
     max_workers = min(settings.DETECTOR_POSTPROCESSING_CPU_WORKERS, len(images))
@@ -207,7 +208,7 @@ def batch_layout_detection(images: List, model, processor, detection_results: Op
                     pred,
                     orig_size,
                     id2label,
-                    detection_results[img_idx] if detection_results else None,
+                    copy.deepcopy(detection_results[img_idx]) if detection_results else None,
                     include_maps
                 )
 
