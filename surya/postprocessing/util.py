@@ -50,7 +50,7 @@ def rescale_points(points, processor_size, image_size):
     return [rescale_point(point, processor_size, image_size) for point in points]
 
 
-def xyxy2xyxyxyxy(xyxy: List[List[float]]) -> List[List[float]]:
+def xyxy2xyxyxyxy(xyxy: List[float]) -> List[List[float]]:
     pt1 = [xyxy[0], xyxy[1]]
     pt2 = [xyxy[2], xyxy[1]]
     pt3 = [xyxy[2], xyxy[3]]
