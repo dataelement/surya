@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import torchvision
 from PIL import Image
-from tqdm import tqdm
+from torch.utils.data import DataLoader
+from tqdm import trange
 
 from surya.detection import batch_detection
 from surya.postprocessing.heatmap import (
@@ -238,55 +239,11 @@ def batch_layout_detection(
     return [future.result() for future in postprocessing_futures]
 
 
-def get_boxes_from_yolo_preds(preds: List[List[Any]], id2label: Dict[int, str]) -> List[LayoutBox]:
-    layout_boxes = []
-    boxes = preds.boxes.xyxy
-    scores = preds.boxes.conf
-    classes = preds.boxes.cls
-
-    # Group boxes by class
-    class_indices = {}
-    for i in range(len(boxes)):
-        cls_id = int(classes[i])
-        if cls_id not in class_indices:
-            class_indices[cls_id] = []
-        class_indices[cls_id].append(i)
-
-    # Perform NMS for each class
-    keep_indices = []
-    for cls_id, indices in class_indices.items():
-        cls_boxes = boxes[indices]
-        cls_scores = scores[indices]
-
-        # Perform NMS within class
-        nms_indices = torchvision.ops.nms(
-            boxes=cls_boxes, scores=cls_scores, iou_threshold=settings.LAYOUT_DETETOR_NUMS_THRESHOLD
-        )
-
-        # Convert back to original indices
-        keep_indices.extend([indices[i] for i in nms_indices])
-
-    final_indices = []
-
-    # Create layout boxes for remaining indices
-    final_preds = [preds[i] for i in keep_indices]
-    for pred in final_preds:
-        layout_boxes.append(
-            LayoutBox(
-                polygon=xyxy2xyxyxyxy(pred.boxes.xyxy[0]),
-                label=id2label[int(pred.boxes.cls)],
-                confidence=float(pred.boxes.conf),
-            )
-        )
-    return remove_overlapping_boxes(layout_boxes)
-
-
 def get_regions_from_yolo_detection_result(
-    detection_result: TextDetectionResult,
     layout_boxes: List[LayoutBox],
     id2label,
+    detection_result: TextDetectionResult,
 ) -> List[LayoutBox]:
-    line_bboxes = detection_result.bboxes
 
     detected_boxes = []
     for layout_box in layout_boxes:
@@ -296,9 +253,15 @@ def get_regions_from_yolo_detection_result(
         for i in range(len(pred_boxes)):
             detected_boxes.append(
                 LayoutBox(
-                    polygon=xyxy2xyxyxyxy(pred_boxes[i]), label=id2label[int(classes[i])], confidence=float(confs[i])
+                    polygon=xyxy2xyxyxyxy(pred_boxes[i]),
+                    label=id2label[int(classes[i])],
+                    confidence=float(confs[i]),
                 )
             )
+    if not detection_result:
+        return detected_boxes
+
+    line_bboxes = detection_result.bboxes
 
     detected_boxes = sorted(detected_boxes, key=lambda x: x.confidence, reverse=True)
     # Expand bbox to cover intersecting lines
@@ -393,36 +356,39 @@ def get_regions_from_yolo_detection_result(
 def batch_layout_detection_yolo(
     images: List,
     model,
-    detection_results: List[TextDetectionResult],
+    detection_results: Optional[List[TextDetectionResult]] = None,
     batch_size=None,
-    **kwargs,
 ) -> List[LayoutResult]:
     id2label = settings.ID2LABEL
     if batch_size is None:
         batch_size = min(len(images), 2)
 
     results = []
-    for idx, image in tqdm(enumerate(images)):
+    for batch_idx in trange(0, len(images), batch_size, desc="Processing layout detection"):
+        batch_images = images[batch_idx : batch_idx + batch_size]
         outputs = model.predict(
-            [image],
-            device=['0'],
+            batch_images,
+            device=settings.TORCH_DEVICE,
             max_det=settings.LAYOUT_DETECTOR_MAX_DET,
             conf=settings.LAYOUT_DETECTOR_CONF,
             imgsz=settings.LAYOUT_IMGSZ,
             verbose=False,
         )
-        layout_boxes = get_regions_from_yolo_detection_result(
-            detection_result=detection_results[idx],
-            layout_boxes=outputs,
-            id2label=id2label,
-        )
-        results.append(
-            LayoutResult(
-                bboxes=layout_boxes,
-                segmentation_map=None,
-                heatmaps=None,
-                image_bbox=[0, 0, outputs[0].orig_shape[1], outputs[0].orig_shape[0]],
+        for idx, output in enumerate(outputs):
+            cur_idx = batch_idx + idx
+            cur_det_result = detection_results[cur_idx] if detection_results else None
+            layout_boxes = get_regions_from_yolo_detection_result(
+                detection_result=cur_det_result,
+                layout_boxes=output,
+                id2label=id2label,
             )
-        )
+            results.append(
+                LayoutResult(
+                    bboxes=layout_boxes,
+                    segmentation_map=None,
+                    heatmaps=None,
+                    image_bbox=[0, 0, output.orig_shape[1], output.orig_shape[0]],
+                )
+            )
 
     return results
