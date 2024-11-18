@@ -1,8 +1,11 @@
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from itertools import repeat
 
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor
+import Polygon as plg
+
+from surya.postprocessing.util import remove_overlapping_boxes, xyxy2xyxyxyxy
 
 
 def intersection_area(box1, box2):
@@ -15,6 +18,7 @@ def intersection_area(box1, box2):
         return 0.0
 
     return (x_right - x_left) * (y_bottom - y_top)
+
 
 def box_area(box):
     return (box[2] - box[0]) * (box[3] - box[1])
@@ -52,7 +56,7 @@ def match_boxes(preds, references):
         i, j = idx
         if i not in assigned_actual and j not in assigned_pred:
             iou_val = iou_matrix[i, j]
-            if iou_val > .95: # Account for rounding on box edges
+            if iou_val > 0.95:  # Account for rounding on box edges
                 iou_val = 1.0
             matches.append((i, j, iou_val))
             assigned_actual.add(i)
@@ -65,10 +69,12 @@ def match_boxes(preds, references):
 
     return matches
 
+
 def penalized_iou_score(preds, references):
     matches = match_boxes(preds, references)
     iou = sum([match[2] for match in matches]) / len(matches)
     return iou
+
 
 def intersection_pixels(box1, box2):
     x_left = max(box1[0], box2[0])
@@ -121,17 +127,19 @@ def calculate_coverage_fast(box, other_boxes, penalize_double=False):
     return min(1, total_intersect / box_area)
 
 
-def precision_recall(preds, references, threshold=.5, workers=8, penalize_double=True):
+def precision_recall(preds, references, threshold=0.5, workers=8, penalize_double=True):
     if len(references) == 0:
         return {
             "precision": 1,
             "recall": 1,
+            "f1": 1,
         }
 
     if len(preds) == 0:
         return {
             "precision": 0,
             "recall": 0,
+            "f1": 0,
         }
 
     # If we're not penalizing double coverage, we can use a faster calculation
@@ -150,9 +158,12 @@ def precision_recall(preds, references, threshold=.5, workers=8, penalize_double
     recall_classes = [1 if i > threshold else 0 for i in reference_iou]
     recall = sum(recall_classes) / len(recall_classes)
 
+    f1 = 0 if (precision + recall) == 0 else 2 * precision * recall / (precision + recall)
+
     return {
         "precision": precision,
         "recall": recall,
+        "f1": f1,
     }
 
 
@@ -191,3 +202,129 @@ def rank_accuracy(preds, references):
                 correct += 1
 
     return correct / len(pairs)
+
+
+class MetricIou:
+    def __init__(self, iou_thresh=0.5):
+        self.iou_thresh = iou_thresh
+
+    def __call__(self, gt_boxes_list, boxes_list):
+        detMatched_list = []
+        numDetCare_list = []
+        numGtCare_list = []
+        for i in range(len(gt_boxes_list)):
+            gt_boxes = gt_boxes_list[i]
+            boxes = boxes_list[i]
+            detMatched, numDetCare, numGtCare = self.eval(gt_boxes, boxes)
+            detMatched_list.append(detMatched)
+            numDetCare_list.append(numDetCare)
+            numGtCare_list.append(numGtCare)
+        matchedSum = np.sum(np.array(detMatched_list))
+        numGlobalCareDet = np.sum(np.array(numDetCare_list))
+        numGlobalCareGt = np.sum(np.array(numGtCare_list))
+        methodRecall = 0 if numGlobalCareGt == 0 else float(matchedSum) / numGlobalCareGt
+        methodPrecision = 0 if numGlobalCareDet == 0 else float(matchedSum) / numGlobalCareDet
+        methodHmean = (
+            0
+            if methodRecall + methodPrecision == 0
+            else 2 * methodRecall * methodPrecision / (methodRecall + methodPrecision)
+        )
+        return methodPrecision, methodRecall, methodHmean
+
+    def eval(self, gt_boxes, boxes):
+        detMatched = 0
+        numDetCare = 0
+        numGtCare = 0
+        if gt_boxes is None:
+            return 0, 0, 0
+
+        gtPols = []
+        detPols = []
+        detDontCarePolsNum = []
+        iouMat = np.empty([1, 1])
+        for i in range(len(gt_boxes)):
+            gt_box = gt_boxes[i]
+            gtPols.append(self.polygon_from_box(gt_box))
+
+        if boxes is None:
+            return 0, 0, len(gtPols)
+
+        for box in boxes:
+            detPol = self.polygon_from_box(box)
+            detPols.append(detPol)
+
+        if len(gtPols) > 0 and len(detPols) > 0:
+            outputShape = [len(gtPols), len(detPols)]
+            iouMat = np.empty(outputShape)
+            gtRectMat = np.zeros(len(gtPols), np.int8)
+            detRectMat = np.zeros(len(detPols), np.int8)
+            pairs = []
+            detMatchedNums = []
+            for gtNum in range(len(gtPols)):
+                for detNum in range(len(detPols)):
+                    pG = gtPols[gtNum]
+                    pD = detPols[detNum]
+                    iouMat[gtNum, detNum] = self.get_intersection_over_union(pD, pG)
+
+            for gtNum in range(len(gtPols)):
+                for detNum in range(len(detPols)):
+                    if gtRectMat[gtNum] == 0 and detRectMat[detNum] == 0 and detNum not in detDontCarePolsNum:
+                        if iouMat[gtNum, detNum] > self.iou_thresh:
+                            gtRectMat[gtNum] = 1
+                            detRectMat[detNum] = 1
+                            detMatched += 1
+                            pairs.append({'gt': gtNum, 'det': detNum})
+                            detMatchedNums.append(detNum)
+
+        numGtCare = len(gtPols)
+        numDetCare = len(detPols) - len(detDontCarePolsNum)
+        return detMatched, numDetCare, numGtCare
+
+    def get_intersection(self, pD, pG):
+        pInt = pD & pG
+        if len(pInt) == 0:
+            return 0
+        return pInt.area()
+
+    def get_union(self, pD, pG):
+        areaA = pD.area()
+        areaB = pG.area()
+        return areaA + areaB - self.get_intersection(pD, pG)
+
+    def get_intersection_over_union(self, pD, pG):
+        try:
+            return self.get_intersection(pD, pG) / self.get_union(pD, pG)
+        except Exception:
+            return 0
+
+    def polygon_from_box(self, box):
+        resBoxes = np.empty([1, 8], dtype='int32')
+        resBoxes[0, 0] = int(box[0][0])
+        resBoxes[0, 4] = int(box[0][1])
+        resBoxes[0, 1] = int(box[1][0])
+        resBoxes[0, 5] = int(box[1][1])
+        resBoxes[0, 2] = int(box[2][0])
+        resBoxes[0, 6] = int(box[2][1])
+        resBoxes[0, 3] = int(box[3][0])
+        resBoxes[0, 7] = int(box[3][1])
+        pointMat = resBoxes[0].reshape([2, 4]).T
+        return plg.Polygon(pointMat)
+
+
+def precision_recall_v2(preds, references, threshold=0.5):
+    """
+    more faster than v1
+    """
+    eval_iou = MetricIou(iou_thresh=threshold)
+    if len(references) == 0:
+        return {"precision": 1, "recall": 1, "f1": 1}
+    if len(preds) == 0:
+        return {"precision": 0, "recall": 0, "f1": 0}
+
+    references = [xyxy2xyxyxyxy(ref) for ref in references]
+    preds = [xyxy2xyxyxyxy(pred) for pred in preds]
+    references = np.array(references).reshape(1, -1, 4, 2)
+    preds = np.array(preds).reshape(1, -1, 4, 2)
+
+    precision, recall, f1 = eval_iou(references, preds)
+    return {"precision": float(precision), "recall": float(recall), "f1": float(f1)}
