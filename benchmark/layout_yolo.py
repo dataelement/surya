@@ -54,7 +54,7 @@ def get_label_alignment(dataset_type: DatasetType, model_type: ModelType):
     alignments = {
         DatasetType.ELEM: {
             ModelType.DOCLAYOUT_YOLO: {  # elem layout to doclayout_yolo
-                "Image": [["Seal", "Picture"], ["figure"]],
+                "Image": [["Picture"], ["figure"]],
                 "Table": [["Table"], ["table"]],
                 "Text": [["Text"], ["plain text"]],
                 "Title": [["Title"], ["title"]],
@@ -78,7 +78,19 @@ def get_label_alignment(dataset_type: DatasetType, model_type: ModelType):
                 "Table": [["Table"], ["Table"]],
                 "Text": [["Text"], ["Text"]],
                 "Title": [["Section-header", "Title"], ["Section-header", "Title"]],
-            }
+            },
+            ModelType.ELEM_YOLO: {  # elem layout to elem_yolo
+                "Image": [["Picture"], ["Picture", "Figure"]],
+                "Table": [["Table"], ["Table"]],
+                "Text": [["Text"], ["Text"]],
+                "Title": [["Title", "Section-header"], ["Section-header", "Title"]],
+            },
+            ModelType.DOCLAYOUT_YOLO: {  # elem layout to doclayout_yolo
+                "Image": [["Picture"], ["figure"]],
+                "Table": [["Table"], ["table"]],
+                "Text": [["Text"], ["plain text"]],
+                "Title": [["Title", "Section-header"], ["title"]],
+            },
         },
     }
     return alignments[dataset_type][model_type]
@@ -166,7 +178,7 @@ def main():
         help="Path to results directory",
         default=os.path.join(settings.RESULT_DIR, "benchmark"),
     )
-    parser.add_argument("--max", type=int, help="Maximum number of images to run benchmark on.", default=10)
+    parser.add_argument("--max", type=int, help="Maximum number of images to run benchmark on.", default=1000)
     parser.add_argument("--debug", action="store_true", help="Run in debug mode.", default=False)
     parser.add_argument(
         "--model_type",
@@ -229,16 +241,22 @@ def main():
     for idx, pred in enumerate(layout_predictions):
         row = dataset.iloc[idx]
         all_correct_bboxes = []
+        all_correct_labels = []
         all_pred_bboxes = []
+        all_pred_labels = []
+        all_pred_scores = []
         page_results = {}
         for label_name in label_alignment:
             correct_cats, surya_cats = label_alignment[label_name]
             correct_bboxes = [b for b, l in zip(row["bboxes"], row["labels"]) if l in correct_cats]
             all_correct_bboxes.extend(correct_bboxes)
+            all_correct_labels.extend([l for l in row["labels"] if l in correct_cats])
             pred_bboxes = [b.bbox for b in pred.bboxes if b.label in surya_cats]
             all_pred_bboxes.extend(pred_bboxes)
-            # metrics = precision_recall_v2(pred_bboxes, correct_bboxes)
-            metrics = precision_recall_v2([], [])
+            all_pred_labels.extend([l.label for l in pred.bboxes if l.label in surya_cats])
+            all_pred_scores.extend([b.confidence for b in pred.bboxes if b.label in surya_cats])
+            metrics = precision_recall_v2(pred_bboxes, correct_bboxes)
+            # metrics = precision_recall_v2([], [])
             weight = len(correct_bboxes)
             metrics["weight"] = weight
             page_results[label_name] = metrics
@@ -248,15 +266,15 @@ def main():
         if args.debug:
             gt_image = visualize_bbox(
                 image_path=copy.deepcopy(images[idx]),
-                bboxes=row["bboxes"],
-                classes=row["labels"],
-                scores=[1] * len(row["bboxes"]),
+                bboxes=all_correct_bboxes,
+                classes=all_correct_labels,
+                scores=[1] * len(all_correct_bboxes),
             )
             pred_image = visualize_bbox(
                 image_path=copy.deepcopy(images[idx]),
-                bboxes=[i.bbox for i in layout_predictions[idx].bboxes],
-                classes=[i.label for i in layout_predictions[idx].bboxes],
-                scores=[i.confidence for i in layout_predictions[idx].bboxes],
+                bboxes=all_pred_bboxes,
+                classes=all_pred_labels,
+                scores=all_pred_scores,
             )
             # concat gt and pred images
             concat_image = np.concatenate([gt_image, pred_image], axis=1)
