@@ -132,8 +132,16 @@ class ElemSettings(Settings):
     RECOGNITION_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "rec_bench")
 
     LAYOUT_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_layout3")
+
     # layout yolo
-    LAYOUT_YOLO_CHECKPOINT: str = '/workspace/models/hantian/yolo-doclaynet/yolov10b-doclaynet.pt'
+    # LAYOUT_YOLO_CHECKPOINT: str = '/workspace/models/hantian/yolo-doclaynet/yolov10b-doclaynet.pt'
+    LAYOUT_YOLO_CHECKPOINT: str = '/workspace/youjiachen/workspace/ultralytics/layout_yolo11l_doclaynet_2/yolo11l_doclaynet_2_epoch50_imgsz1024_bs642/weights/best.pt'
+    # LAYOUT_YOLO_CHECKPOINT: str = (
+    #     '/workspace/youjiachen/workspace/ultralytics/layout_yolo11l_doclaynet_2_from_pretrain/last_doclaynet_2_epoch50_imgsz1024_bs64/weights/best.pt'
+    # )
+    # LAYOUT_YOLO_CHECKPOINT: str = (
+    #     "/workspace/models/DocLayout-YOLO/DocLayout-YOLO-DocStructBench/doclayout_yolo_docstructbench_imgsz1024.onnx"
+    # )
     LAYOUT_IMGSZ: int = 1024
     LAYOUT_DETECTOR_CONF: float = 0.4
     LAYOUT_DETECTOR_MAX_DET: int = 300
@@ -151,10 +159,26 @@ class ElemSettings(Settings):
         9: "Text",
         10: "Title",
     }
+    # ID2LABEL: Dict[int, str] = {
+    #     0: "title",
+    #     1: "plain text",
+    #     2: "abandon",
+    #     3: "figure",
+    #     4: "figure_caption",
+    #     5: "table",
+    #     6: "table_caption",
+    #     7: "table_footnote",
+    #     8: "isolate_formula",
+    #     9: "formula_caption",
+    # }
 
     LAYOUT_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "publaynet_bench")
+    ELEM_LAYOUT_BENCH_DATASET_NAME: str = '/workspace/datasets/layout/dataelem_layout/yolo_format_merge_all'
+    DOCLAYNET_BENCH_DATASET_PATH: str = '/workspace/datasets/layout/DocLayout-YOLO/layout_data/doclaynet'
 
     ORDER_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_order")
+    ORDER_LAYOUTLMV3_MODEL_CHECKPOINT: str = "/workspace/models/reading_order/elem_reading_order_v1"
+    ORDER_LAYOUTLMV3_MODEL_CHECKPOINT: str = "/workspace/models/hantian/layoutreader"
     ORDER_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "order_bench")
 
     TABLE_REC_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_tablerec")
