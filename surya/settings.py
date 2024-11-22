@@ -124,10 +124,15 @@ class ElemSettings(Settings):
     BENCH_DIR: str = "/workspace/datasets/surya_benchmarks"
     FONT_DIR: str = os.path.join(BASE_DIR, "static", "fonts")
 
-    # Update paths that depend on MODEL_DIR and BENCH_DIR
+    # Text detection
     DETECTOR_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_det3")
     DETECTOR_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "doclaynet_bench")
-
+    YOLO_DETECTOR_CHECKPOINT: str = (
+        '/workspace/youjiachen/workspace/ultralytics/text_det_yolo11x/yolo11x-obb_text_det_epoch50_imgsz1024_bs32/weights/best.pt'
+    )
+    TEXT_DETECTOR_MAX_DET: int = 300
+    TEXT_DETECTOR_CONF: float = 0.4
+    TEXT_DETECTOR_IMGSZ: int = 1024
     RECOGNITION_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_rec2")
     RECOGNITION_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "rec_bench")
 
@@ -190,8 +195,8 @@ class ElemSettings(Settings):
     DOCLAYNET_BENCH_DATASET_PATH: str = '/workspace/datasets/layout/DocLayout-YOLO/layout_data/doclaynet'
 
     ORDER_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_order")
-    ORDER_LAYOUTLMV3_MODEL_CHECKPOINT: str = "/workspace/models/reading_order/elem_reading_order_v1"
-    ORDER_LAYOUTLMV3_MODEL_CHECKPOINT: str = "/workspace/models/hantian/layoutreader"
+    # ORDER_LAYOUTLMV3_MODEL_CHECKPOINT: str = "/workspace/models/reading_order/elem_reading_order_v1"
+    ORDER_LAYOUTLMV3_MODEL_CHECKPOINT: str = "/workspace/models/reading_order/ppaanngggg/layoutreader"
     ORDER_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "order_bench")
 
     TABLE_REC_MODEL_CHECKPOINT: str = os.path.join(MODEL_DIR, "surya_tablerec")

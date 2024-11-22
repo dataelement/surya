@@ -1,21 +1,24 @@
 import contextlib
-
-import torch
-from typing import List, Tuple, Generator
+from concurrent.futures import ThreadPoolExecutor
+from typing import Generator, List, Tuple
 
 import numpy as np
-from PIL import Image
-
-from surya.model.detection.model import EfficientViTForSemanticSegmentation
-from surya.postprocessing.heatmap import get_and_clean_boxes
-from surya.postprocessing.affinity import get_vertical_lines
-from surya.input.processing import prepare_image_detection, split_image, get_total_splits
-from surya.schema import TextDetectionResult
-from surya.settings import settings
-from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
+import torch
 import torch.nn.functional as F
+from PIL import Image
+from tqdm import tqdm
 
+from surya.input.processing import (
+    get_total_splits,
+    prepare_image_detection,
+    split_image,
+)
+from surya.model.detection.model import EfficientViTForSemanticSegmentation
+from surya.postprocessing.affinity import get_vertical_lines
+from surya.postprocessing.heatmap import get_and_clean_boxes
+from surya.postprocessing.util import xyxy2xyxyxyxy
+from surya.schema import PolygonBox, TextDetectionResult
+from surya.settings import settings
 from surya.util.parallel import FakeExecutor
 
 
@@ -29,6 +32,7 @@ def get_batch_size():
             batch_size = 36
     return batch_size
 
+
 def pad_to_batch_size(tensor, batch_size):
     current_batch_size = tensor.shape[0]
     if current_batch_size >= batch_size:
@@ -39,12 +43,9 @@ def pad_to_batch_size(tensor, batch_size):
 
     return F.pad(tensor, padding, mode='constant', value=0)
 
+
 def batch_detection(
-    images: List,
-    model: EfficientViTForSemanticSegmentation,
-    processor,
-    batch_size=None,
-    static_cache=False
+    images: List, model: EfficientViTForSemanticSegmentation, processor, batch_size=None, static_cache=False
 ) -> Generator[Tuple[List[List[np.ndarray]], List[Tuple[int, int]]], None, None]:
     assert all([isinstance(image, Image.Image) for image in images])
     if batch_size is None:
@@ -135,13 +136,17 @@ def parallel_get_lines(preds, orig_sizes, include_maps=False):
         vertical_lines=vertical_lines,
         heatmap=heat_img,
         affinity_map=aff_img,
-        image_bbox=[0, 0, orig_sizes[0], orig_sizes[1]]
+        image_bbox=[0, 0, orig_sizes[0], orig_sizes[1]],
     )
     return result
 
 
-def batch_text_detection(images: List, model, processor, batch_size=None, include_maps=False) -> List[TextDetectionResult]:
-    detection_generator = batch_detection(images, model, processor, batch_size=batch_size, static_cache=settings.DETECTOR_STATIC_CACHE)
+def batch_text_detection(
+    images: List, model, processor, batch_size=None, include_maps=False
+) -> List[TextDetectionResult]:
+    detection_generator = batch_detection(
+        images, model, processor, batch_size=batch_size, static_cache=settings.DETECTOR_STATIC_CACHE
+    )
 
     postprocessing_futures = []
     max_workers = min(settings.DETECTOR_POSTPROCESSING_CPU_WORKERS, len(images))
@@ -153,3 +158,40 @@ def batch_text_detection(images: List, model, processor, batch_size=None, includ
                 postprocessing_futures.append(e.submit(parallel_get_lines, pred, orig_size, include_maps))
 
     return [future.result() for future in postprocessing_futures]
+
+
+def text_detection_yolo(images: List, model, batch_size=None, include_maps=False) -> List[TextDetectionResult]:
+    results = []
+    for image in tqdm(images, desc="Detecting bboxes"):
+        # preds = model.predict(
+        #     image,
+        #     conf=settings.TEXT_DETECTOR_CONF,
+        #     max_det=settings.TEXT_DETECTOR_MAX_DET,
+        #     verbose=False,
+        #     save=False,
+        #     imgsz=settings.TEXT_DETECTOR_IMGSZ,
+        # )
+        preds, elapse = model(image)
+
+        bboxes = []
+        # for pred in preds:
+        #     polygons = pred.obb.xyxyxyxy
+        #     confs = pred.obb.conf.tolist()
+        #     for polygon, conf in zip(polygons, confs):
+        #         polygon[[0, 2]] = polygon[[2, 0]]
+        #         bboxes.append(PolygonBox(polygon=polygon, confidence=conf))
+        for pred in preds:
+            bboxes.append(PolygonBox(polygon=pred[0], confidence=pred[2]))
+
+        vertical_lines = []
+        heat_img = None
+        affinity_map = None
+        result = TextDetectionResult(
+            bboxes=bboxes,
+            vertical_lines=vertical_lines,
+            heatmap=heat_img,
+            affinity_map=affinity_map,
+            image_bbox=[0, 0, image.width, image.height],
+        )
+        results.append(result)
+    return results
