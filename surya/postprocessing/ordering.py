@@ -217,13 +217,17 @@ def get_block_order(block_lines: Dict[int, List[TextLine]], line_predictions: Li
     block2order = {}
     current_idx = 0
 
+    line_cnt = 0
     for block_idx, lines in block_lines.items():
         block_line_count = len(lines)
+        line_cnt += block_line_count
         if block_line_count == 0:
             continue
 
         block_predictions = line_predictions[current_idx : current_idx + block_line_count]
         block2order[block_idx] = median(block_predictions)
         current_idx += block_line_count
+
+    assert line_cnt == len(line_predictions)
 
     return block2order

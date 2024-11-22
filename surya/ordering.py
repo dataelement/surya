@@ -239,6 +239,7 @@ def elem_batch_ordering(
         # 2. Assign spans to blocks
         spans = text_det_results[page_idx].bboxes
         block2spans = assign_spans_to_blocks(valid_blocks, spans)
+        
         if debug:
             boxes = []
             labels = []
@@ -274,6 +275,7 @@ def elem_batch_ordering(
                 block_lines = create_virtual_lines(
                     current_block.bbox, median_line_height, layout_result.image_bbox[2], layout_result.image_bbox[3]
                 )
+                block2lines[block_idx] = block_lines
             all_lines.extend(block_lines)
 
         if debug:
@@ -293,12 +295,13 @@ def elem_batch_ordering(
             input_boxes.append(scaled_box)
 
         # 5. Get reading order predictions
-        sorted_boxes = sorted(input_boxes, key=lambda x: (x[1], x[0]))  # Sort by y, then x
-        # sorted_boxes = input_boxes
+        # sorted_boxes = sorted(input_boxes, key=lambda x: (x[1], x[0]))  # Sort by y, then x
+        sorted_boxes = input_boxes
         inputs = boxes2inputs(sorted_boxes)
         inputs = prepare_inputs(inputs, model)
         logits = model(**inputs).logits.cpu().squeeze(0)
         line_predictions = parse_logits(logits, len(sorted_boxes))
+
         if debug:
             boxes = [i['bbox'] for i in all_lines]
             img = visualize_bbox(images[page_idx], boxes, list(map(str, line_predictions)))
