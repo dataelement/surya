@@ -9,9 +9,20 @@ def load_model(
     device=settings.TORCH_DEVICE_MODEL,
     dtype=settings.MODEL_DTYPE,
 ):
+    if torch.cuda.is_available():
+        device = device
+        if torch.cuda.is_bf16_supported():
+            supports_bfloat16 = True
+        else:
+            supports_bfloat16 = False
+    else:
+        device = torch.device('cpu')
+        supports_bfloat16 = False
+
     model = LayoutLMv3ForTokenClassification.from_pretrained(checkpoint, torch_dtype=dtype)
-    model = model.to(device)
-    model = model.eval()
+    if supports_bfloat16:
+        model.bfloat16()
+    model.to(device).eval()
 
     if settings.LAYOUT_STATIC_CACHE:
         torch.set_float32_matmul_precision('high')
