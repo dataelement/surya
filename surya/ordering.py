@@ -205,15 +205,15 @@ def elem_batch_ordering(
     filter_block_labels = {'Page-footer', 'Page-header'}
     order_results = []
 
+    if debug:
+        debug_dir = "results/debug/ordering"
+        if os.path.exists(debug_dir):
+            shutil.rmtree(debug_dir)
+        os.makedirs(debug_dir, exist_ok=True)
+
     for page_idx, layout_result in enumerate(layout_results):
-
         if debug:
-            debug_dir = "results/debug/ordering"
-            if os.path.exists(debug_dir):
-                shutil.rmtree(debug_dir)
-            os.makedirs(debug_dir, exist_ok=True)
             images[page_idx].save(f"{debug_dir}/{page_idx}.png")
-
             layout_boxes = []
             layout_labels = []
             for block in layout_result.bboxes:
@@ -222,6 +222,7 @@ def elem_batch_ordering(
                 layout_labels.extend([block_label] * len(layout_boxes))
             img = visualize_bbox(images[page_idx], layout_boxes, layout_labels)
             cv2.imwrite(f"{debug_dir}/{page_idx}_layout.png", img)
+            print(f"Saved layout to {debug_dir}/{page_idx}_layout.png")
 
         # 1. Split blocks into valid and invalid
         valid_blocks = []
@@ -239,7 +240,7 @@ def elem_batch_ordering(
         # 2. Assign spans to blocks
         spans = text_det_results[page_idx].bboxes
         block2spans = assign_spans_to_blocks(valid_blocks, spans)
-        
+
         if debug:
             boxes = []
             labels = []
@@ -250,6 +251,7 @@ def elem_batch_ordering(
                 labels.extend([block_label] * len(span_boxes))
             debug_image = visualize_bbox(images[page_idx], boxes, labels)
             cv2.imwrite(f"{debug_dir}/{page_idx}_spans.png", debug_image)
+            print(f"Saved spans to {debug_dir}/{page_idx}_spans.png")
 
         # 3. Merge spans into lines for each block
         block2lines = {}
@@ -264,7 +266,7 @@ def elem_batch_ordering(
                 block_lines = sort_spans_horizontally(block_lines)
             block2lines[block_idx] = block_lines
             _line_heights.extend([line['bbox'][3] - line['bbox'][1] for line in block_lines])
-        median_line_height = median(_line_heights)
+        median_line_height = median(_line_heights) if _line_heights else 10
 
         # 5. Create virtual lines for table, picture, and figure blocks
         all_lines: List[Dict] = []
