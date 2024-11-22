@@ -1,6 +1,7 @@
-import numpy as np
 import cv2
+import numpy as np
 from PIL import Image
+
 
 def colormap(N=256, normalized=False):
     """
@@ -11,6 +12,7 @@ def colormap(N=256, normalized=False):
     Returns:
         np.ndarray: Color map array of shape (N, 3).
     """
+
     def bitget(byteval, idx):
         """
         Get the bit value at the specified index.
@@ -20,7 +22,7 @@ def colormap(N=256, normalized=False):
         Returns:
             int: The bit value (0 or 1).
         """
-        return ((byteval & (1 << idx)) != 0)
+        return (byteval & (1 << idx)) != 0
 
     cmap = np.zeros((N, 3), dtype=np.uint8)
     for i in range(N):
@@ -32,13 +34,14 @@ def colormap(N=256, normalized=False):
             b = b | (bitget(c, 2) << (7 - j))
             c = c >> 3
         cmap[i] = np.array([r, g, b])
-    
+
     if normalized:
         cmap = cmap.astype(np.float32) / 255.0
 
     return cmap
 
-def visualize_bbox(image_path, bboxes, classes, scores , alpha=0.3):
+
+def visualize_bbox(image_path, bboxes, classes, scores=None, alpha=0.3):
     """
     Visualize layout detection results on an image.
     Args:
@@ -58,26 +61,27 @@ def visualize_bbox(image_path, bboxes, classes, scores , alpha=0.3):
         image = cv2.imread(image_path)
 
     overlay = image.copy()
-    
-    cmap = colormap(N=len(classes), normalized=False)
-    
+
+    cmap = colormap(N=len(set(classes)), normalized=False)
+    clss2color = {cls: color for cls, color in zip(set(classes), cmap)}
+
     # Iterate over each bounding box
     for i, bbox in enumerate(bboxes):
         x_min, y_min, x_max, y_max = map(int, bbox)
         class_name = classes[i]
-        
-        text = class_name + f":{scores[i]:.3f}"
-        
-        color = tuple(int(c) for c in cmap[i])
+        color = tuple(clss2color[class_name].tolist())
+
+        text = class_name + f":{scores[i]:.3f}" if scores else class_name
+
         cv2.rectangle(overlay, (x_min, y_min), (x_max, y_max), color, -1)
         cv2.rectangle(image, (x_min, y_min), (x_max, y_max), color, 2)
-        
+
         # Add the class name with a background rectangle
         (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
         cv2.rectangle(image, (x_min, y_min - text_height - baseline), (x_min + text_width, y_min), color, -1)
         cv2.putText(image, text, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-    
+
     # Blend the overlay with the original image
     cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
-    
+
     return image
