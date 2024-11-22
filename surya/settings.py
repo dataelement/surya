@@ -135,10 +135,10 @@ class ElemSettings(Settings):
 
     # layout yolo
     # LAYOUT_YOLO_CHECKPOINT: str = '/workspace/models/hantian/yolo-doclaynet/yolov10b-doclaynet.pt'
-    LAYOUT_YOLO_CHECKPOINT: str = '/workspace/youjiachen/workspace/ultralytics/layout_yolo11l_doclaynet_2/yolo11l_doclaynet_2_epoch50_imgsz1024_bs642/weights/best.pt'
-    # LAYOUT_YOLO_CHECKPOINT: str = (
-    #     '/workspace/youjiachen/workspace/ultralytics/layout_yolo11l_doclaynet_2_from_pretrain/last_doclaynet_2_epoch50_imgsz1024_bs64/weights/best.pt'
-    # )
+    # LAYOUT_YOLO_CHECKPOINT: str = '/workspace/youjiachen/workspace/ultralytics/layout_yolo11l_doclaynet_2/yolo11l_doclaynet_2_epoch50_imgsz1024_bs642/weights/best.pt'
+    LAYOUT_YOLO_CHECKPOINT: str = (
+        '/workspace/youjiachen/workspace/ultralytics/layout_yolo11l_doclaynet_2_from_pretrain/last_doclaynet_2_epoch50_imgsz1024_bs64/weights/best.pt'
+    )
     # LAYOUT_YOLO_CHECKPOINT: str = (
     #     "/workspace/models/DocLayout-YOLO/DocLayout-YOLO-DocStructBench/doclayout_yolo_docstructbench_imgsz1024.onnx"
     # )
@@ -170,6 +170,19 @@ class ElemSettings(Settings):
     #     7: "table_footnote",
     #     8: "isolate_formula",
     #     9: "formula_caption",
+    # }
+
+    # ID2LABEL: Dict[int, str] = {
+    #     0: "Title",
+    #     1: "Text",
+    #     2: "Page-header",
+    #     3: "Figure",
+    #     4: "Figure-caption",
+    #     5: "Table",
+    #     6: "Table-caption",
+    #     7: "Table-footnote",
+    #     8: "Isolate-formula",
+    #     9: "Formula-caption",
     # }
 
     LAYOUT_BENCH_DATASET_NAME: str = os.path.join(BENCH_DIR, "publaynet_bench")

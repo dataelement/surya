@@ -32,7 +32,7 @@ def main():
         help="Path to JSON file with benchmark results.",
         default=os.path.join(settings.RESULT_DIR, "benchmark"),
     )
-    parser.add_argument("--max", type=int, help="Maximum number of images to run benchmark on.", default=10)
+    parser.add_argument("--max", type=int, help="Maximum number of images to run benchmark on.", default=1)
     parser.add_argument("--debug", action="store_true", help="Run in debug mode.", default=False)
     args = parser.parse_args()
 

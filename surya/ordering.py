@@ -1,9 +1,12 @@
 import logging
+import os
+import shutil
 from collections import defaultdict
 from copy import deepcopy
 from statistics import median
 from typing import Any, Dict, List, Optional
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -11,12 +14,22 @@ from tqdm import tqdm
 from transformers import LayoutLMv3ForTokenClassification
 
 from surya.model.ordering.encoderdecoder import OrderVisionEncoderDecoderModel
+from surya.postprocessing.ordering import (
+    assign_spans_to_blocks,
+    create_virtual_lines,
+    get_block_order,
+    merge_spans_to_lines,
+    sort_spans_horizontally,
+)
+from surya.postprocessing.visualization import visualize_bbox
 from surya.schema import (
     LayoutBox,
     LayoutResult,
     OrderBox,
     OrderResult,
+    PolygonBox,
     TextDetectionResult,
+    TextLine,
 )
 from surya.settings import settings
 from surya.util.reading_order import boxes2inputs, parse_logits, prepare_inputs
@@ -182,81 +195,132 @@ def elem_batch_ordering(
     model: LayoutLMv3ForTokenClassification,
     text_det_results: List[TextDetectionResult],
     layout_results: List[LayoutResult],
+    debug=True,
     batch_size=None,
 ) -> List[OrderResult]:
+    """Process document layout and determine reading order of blocks."""
     assert all([isinstance(image, Image.Image) for image in images])
     assert len(images) == len(text_det_results)
-    # if batch_size is None:
-    #     batch_size = get_batch_size()
 
+    filter_block_labels = {'Page-footer', 'Page-header'}
     order_results = []
-    # 遍历每页的 block 进行 order
-    for page_idx, layout_result in enumerate(layout_results):
-        filter_block_labels = ['Page-footer', 'Page-header', 'Picture', 'Figure', 'Table']
 
-        # 过滤不需要排序的 block
-        invalid_blocks = []
+    for page_idx, layout_result in enumerate(layout_results):
+
+        if debug:
+            debug_dir = "results/debug/ordering"
+            if os.path.exists(debug_dir):
+                shutil.rmtree(debug_dir)
+            os.makedirs(debug_dir, exist_ok=True)
+            images[page_idx].save(f"{debug_dir}/{page_idx}.png")
+
+            layout_boxes = []
+            layout_labels = []
+            for block in layout_result.bboxes:
+                block_label = block.label
+                layout_boxes.append(block.bbox)
+                layout_labels.extend([block_label] * len(layout_boxes))
+            img = visualize_bbox(images[page_idx], layout_boxes, layout_labels)
+            cv2.imwrite(f"{debug_dir}/{page_idx}_layout.png", img)
+
+        # 1. Split blocks into valid and invalid
         valid_blocks = []
+        invalid_blocks = []
         for block in layout_result.bboxes:
-            if block.label in filter_block_labels:
+            block_label = block.label
+            if block_label in filter_block_labels:
                 invalid_blocks.append(block)
             else:
                 valid_blocks.append(block)
 
-        print(f"Invalid blocks {invalid_blocks}")
-        print(f"Valid blocks {valid_blocks}")
-        # 将符合条件的 span 加入到待排序列表中
-        spans_boxes = text_det_results[page_idx].bboxes
-        page_spans = []
-        block2span = defaultdict(list)
-        used_spans = set()
+        if not valid_blocks:
+            continue
 
-        for block_id, block_layoutbox in enumerate(valid_blocks):
-            for span_idx, span_box in enumerate(spans_boxes):
-                if span_idx not in used_spans and span_box.intersection_pct(block_layoutbox) > 0.5:
-                    page_spans.append(span_box)
-                    block2span[block_id].append(len(page_spans) - 1)
-                    used_spans.add(span_idx)
+        # 2. Assign spans to blocks
+        spans = text_det_results[page_idx].bboxes
+        block2spans = assign_spans_to_blocks(valid_blocks, spans)
+        if debug:
+            boxes = []
+            labels = []
+            for block_idx, block_spans in block2spans.items():
+                block_label = valid_blocks[block_idx].label
+                span_boxes = [span.bbox for span in block_spans]
+                boxes.extend(span_boxes)
+                labels.extend([block_label] * len(span_boxes))
+            debug_image = visualize_bbox(images[page_idx], boxes, labels)
+            cv2.imwrite(f"{debug_dir}/{page_idx}_spans.png", debug_image)
 
-        # 对每个 span 进行排序
-        *_, page_width, page_height = layout_result.image_bbox
+        # 3. Merge spans into lines for each block
+        block2lines = {}
+        _line_heights = []
+        for block_idx, block_spans in block2spans.items():
+            current_block = valid_blocks[block_idx]
+            block_label = current_block.label
+            if block_label in {'Table', 'Picture', 'Figure'}:
+                block_lines = []
+            else:
+                block_lines = merge_spans_to_lines(block_spans)
+                block_lines = sort_spans_horizontally(block_lines)
+            block2lines[block_idx] = block_lines
+            _line_heights.extend([line['bbox'][3] - line['bbox'][1] for line in block_lines])
+        median_line_height = median(_line_heights)
+
+        # 5. Create virtual lines for table, picture, and figure blocks
+        all_lines: List[Dict] = []
+        for block_idx, block_lines in block2lines.items():
+            current_block = valid_blocks[block_idx]
+            block_label = current_block.label
+            if block_label in {'Table', 'Picture', 'Figure'}:
+                block_lines = create_virtual_lines(
+                    current_block.bbox, median_line_height, layout_result.image_bbox[2], layout_result.image_bbox[3]
+                )
+            all_lines.extend(block_lines)
+
+        if debug:
+            all_line_bboxes = [i['bbox'] for i in all_lines]
+            debug_image = visualize_bbox(images[page_idx], all_line_bboxes, ['all_lines'] * len(all_line_bboxes))
+            cv2.imwrite(f"{debug_dir}/{page_idx}_all_lines.png", debug_image)
+
+        # 6. Prepare lines for reading order model
+        page_width, page_height = layout_result.image_bbox[2:]
         x_scale = 1000.0 / page_width
         y_scale = 1000.0 / page_height
 
-        logging.info(
-            f"Processing boxes with scale factors: x={x_scale:.2f}, y={y_scale:.2f}. " f"Total boxes: {len(page_spans)}"
-        )
         input_boxes = []
-        for span_box in page_spans:
-            left, top, right, bottom = _clip_and_validate_box(*span_box.bbox, page_width, page_height)
+        for line in all_lines:
+            left, top, right, bottom = _clip_and_validate_box(*line['bbox'], page_width, page_height)
             scaled_box = _scale_box((left, top, right, bottom), x_scale, y_scale)
-            assert (
-                all(0 <= coord <= 1000 for coord in scaled_box)
-                and scaled_box[2] >= scaled_box[0]
-                and scaled_box[3] >= scaled_box[1]
-            ), f'Invalid scaled box coordinates: {scaled_box}'
             input_boxes.append(scaled_box)
 
-        print(f"    len(input_boxes): {len(input_boxes)}")
-        sorted_boxes = sorted(input_boxes, key=lambda x: (x[2], x[1]))
+        # 5. Get reading order predictions
+        sorted_boxes = sorted(input_boxes, key=lambda x: (x[1], x[0]))  # Sort by y, then x
         # sorted_boxes = input_boxes
         inputs = boxes2inputs(sorted_boxes)
         inputs = prepare_inputs(inputs, model)
         logits = model(**inputs).logits.cpu().squeeze(0)
-        predictions = parse_logits(logits, len(sorted_boxes))
+        line_predictions = parse_logits(logits, len(sorted_boxes))
+        if debug:
+            boxes = [i['bbox'] for i in all_lines]
+            img = visualize_bbox(images[page_idx], boxes, list(map(str, line_predictions)))
+            cv2.imwrite(f"{debug_dir}/{page_idx}_order_pred.png", img)
 
-        block2order_media = dict()
-        for block_id, span_idxs in block2span.items():
-            block_span_order = [predictions[idx] for idx in span_idxs]
-            block2order_media[block_id] = median(block_span_order)
+        # 6. Calculate block orders based on their lines
+        block2order = get_block_order(block2lines, line_predictions)
 
-        page_order_bboxes = []
-        ordered_block_id = sorted(block2order_media, key=lambda x: block2order_media[x])
-        for i in ordered_block_id:
-            page_order_bboxes.append(OrderBox(bbox=valid_blocks[i].bbox, position=i))
-        for idx, invalid_block in enumerate(invalid_blocks):
-            page_order_bboxes.append(OrderBox(bbox=invalid_block.bbox, position=(len(block2order_media) + idx)))
-        page_order_result = OrderResult(bboxes=page_order_bboxes, image_bbox=[0, 0, page_width, page_height])
-        order_results.append(page_order_result)
+        # 7. Create final order result
+        page_order_boxes = []
 
-        return order_results
+        # Add valid blocks with their calculated order
+        ordered_block_ids = sorted(block2order.keys(), key=lambda x: block2order[x])
+        for order_idx, block_idx in enumerate(ordered_block_ids):
+            page_order_boxes.append(OrderBox(bbox=valid_blocks[block_idx].bbox, position=order_idx))
+
+        # Add invalid blocks at the end
+        base_position = len(ordered_block_ids)
+        for idx, block in enumerate(invalid_blocks):
+            page_order_boxes.append(OrderBox(bbox=block.bbox, position=base_position + 999))
+
+        # Create page result
+        order_results.append(OrderResult(bboxes=page_order_boxes, image_bbox=[0, 0, page_width, page_height]))
+
+    return order_results
