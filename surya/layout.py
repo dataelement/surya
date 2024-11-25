@@ -359,7 +359,7 @@ def batch_layout_detection_yolo(
     detection_results: Optional[List[TextDetectionResult]] = None,
     batch_size=None,
 ) -> List[LayoutResult]:
-    id2label = settings.ID2LABEL
+    id2label = model.names
     if batch_size is None:
         batch_size = min(len(images), 2)
 
@@ -387,7 +387,7 @@ def batch_layout_detection_yolo(
                     bboxes=layout_boxes,
                     segmentation_map=None,
                     heatmaps=None,
-                    image_bbox=[0, 0, output.orig_shape[1], output.orig_shape[0]],
+                    image_bbox=[0, 0, output.orig_shape[0], output.orig_shape[1]],
                 )
             )
 
