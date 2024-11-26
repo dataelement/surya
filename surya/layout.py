@@ -387,7 +387,7 @@ def batch_layout_detection_yolo(
                     bboxes=layout_boxes,
                     segmentation_map=None,
                     heatmaps=None,
-                    image_bbox=[0, 0, output.orig_shape[0], output.orig_shape[1]],
+                    image_bbox=[0, 0, output.orig_shape[1], output.orig_shape[0]],
                 )
             )
 
