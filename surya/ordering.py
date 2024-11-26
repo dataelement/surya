@@ -1,4 +1,5 @@
 import logging
+import logging as logger
 import os
 import shutil
 from collections import defaultdict
@@ -195,7 +196,7 @@ def elem_batch_ordering(
     model: LayoutLMv3ForTokenClassification,
     text_det_results: List[TextDetectionResult],
     layout_results: List[LayoutResult],
-    debug=True,
+    debug=False,
     batch_size=None,
 ) -> List[OrderResult]:
     """Process document layout and determine reading order of blocks."""
@@ -239,7 +240,43 @@ def elem_batch_ordering(
 
         # 2. Assign spans to blocks
         spans = text_det_results[page_idx].bboxes
-        block2spans = assign_spans_to_blocks(valid_blocks, spans)
+        new_spans = []
+
+        # process_spans
+        # 删除高度或者宽度小于等于0或者置信度低于 0.05 的spans
+        for span in spans:
+            x1, y1, x2, y2 = span.bbox
+            span_score = span.confidence
+            if x2 - x1 <= 0 or y2 - y1 <= 0 or span_score <= 0.05:
+                continue
+            new_spans.append(span)
+        logger.info(f"Discarded {len(spans) - len(new_spans)} spans with low confidence")
+
+        # 删除 iou>0.9中置信度较低的那个
+        discard_spans = set()
+        for i, span in enumerate(new_spans):
+            for j in range(i + 1, len(new_spans)):
+                span2 = new_spans[j]
+                iou = span.intersection_area(span2) / (span.area + span2.area - span.intersection_area(span2))
+                if iou > 0.9:
+                    if span.confidence < span2.confidence:
+                        discard_spans.add(i)
+                    else:
+                        discard_spans.add(j)
+        new_spans_2 = [span for i, span in enumerate(new_spans) if i not in discard_spans]
+        # logger.info(f"Discarded {len(discard_spans)} spans with high iou")
+
+        # 删除重复的 span
+        new_spans_3 = []
+        used_spans = []
+        for span in new_spans_2:
+            box_set = set(span.bbox)
+            if box_set not in used_spans:
+                new_spans_3.append(span)
+                used_spans.append(box_set)
+        # logger.info(f"Discarded {len(new_spans_2) - len(new_spans_3)} duplicate spans")
+
+        block2spans = assign_spans_to_blocks(valid_blocks, new_spans_3)
 
         if debug:
             boxes = []
@@ -269,48 +306,82 @@ def elem_batch_ordering(
         median_line_height = median(_line_heights) if _line_heights else 10
 
         # 5. Create virtual lines for table, picture, and figure blocks
-        all_lines: List[Dict] = []
+        all_line_boxes: List[Dict] = []
         for block_idx, block_lines in block2lines.items():
             current_block = valid_blocks[block_idx]
             block_label = current_block.label
-            if block_label in {'Table', 'Picture', 'Figure'}:
+            if block_label in {'Table', 'Picture', 'Figure'} or not block_lines:
                 block_lines = create_virtual_lines(
                     current_block.bbox, median_line_height, layout_result.image_bbox[2], layout_result.image_bbox[3]
                 )
                 block2lines[block_idx] = block_lines
-            all_lines.extend(block_lines)
+            all_line_boxes.extend([line['bbox'] for line in block_lines])
+
+        all_line_boxes.sort()
 
         if debug:
-            all_line_bboxes = [i['bbox'] for i in all_lines]
-            debug_image = visualize_bbox(images[page_idx], all_line_bboxes, ['all_lines'] * len(all_line_bboxes))
+            debug_image = visualize_bbox(images[page_idx], all_line_boxes, ['all_lines'] * len(all_line_boxes))
             cv2.imwrite(f"{debug_dir}/{page_idx}_all_lines.png", debug_image)
 
         # 6. Prepare lines for reading order model
-        page_width, page_height = layout_result.image_bbox[2:]
-        x_scale = 1000.0 / page_width
-        y_scale = 1000.0 / page_height
+        page_w, page_h = layout_result.image_bbox[2:]
 
-        input_boxes = []
-        for line in all_lines:
-            left, top, right, bottom = _clip_and_validate_box(*line['bbox'], page_width, page_height)
-            scaled_box = _scale_box((left, top, right, bottom), x_scale, y_scale)
-            input_boxes.append(scaled_box)
+        x_scale = 1000.0 / page_w
+        y_scale = 1000.0 / page_h
+        boxes = []
+        # logger.info(f"Scale: {x_scale}, {y_scale}, Boxes len: {len(page_line_list)}")
+        for left, top, right, bottom in all_line_boxes:
+
+            if left < 0:
+                logger.warning(
+                    f'left < 0, left: {left}, right: {right}, top: {top}, bottom: {bottom}, page_w: {page_w}, page_h: {page_h}'
+                )  # noqa: E501
+                left = 0
+            if right > page_w:
+                logger.warning(
+                    f'right > page_w, left: {left}, right: {right}, top: {top}, bottom: {bottom}, page_w: {page_w}, page_h: {page_h}'
+                )  # noqa: E501
+                right = page_w
+            if top < 0:
+                logger.warning(
+                    f'top < 0, left: {left}, right: {right}, top: {top}, bottom: {bottom}, page_w: {page_w}, page_h: {page_h}'
+                )  # noqa: E501
+                top = 0
+            if bottom > page_h:
+                logger.warning(
+                    f'bottom > page_h, left: {left}, right: {right}, top: {top}, bottom: {bottom}, page_w: {page_w}, page_h: {page_h}'
+                )  # noqa: E501
+                bottom = page_h
+
+            left = round(left * x_scale)
+            top = round(top * y_scale)
+            right = round(right * x_scale)
+            bottom = round(bottom * y_scale)
+            assert (
+                1000 >= right >= left >= 0 and 1000 >= bottom >= top >= 0
+            ), f'Invalid box. right: {right}, left: {left}, bottom: {bottom}, top: {top}'  # noqa: E126, E121
+            boxes.append([left, top, right, bottom])
 
         # 5. Get reading order predictions
-        # sorted_boxes = sorted(input_boxes, key=lambda x: (x[1], x[0]))  # Sort by y, then x
-        sorted_boxes = input_boxes
-        inputs = boxes2inputs(sorted_boxes)
+        inputs = boxes2inputs(boxes)
         inputs = prepare_inputs(inputs, model)
         logits = model(**inputs).logits.cpu().squeeze(0)
-        line_predictions = parse_logits(logits, len(sorted_boxes))
+        line_predictions = parse_logits(logits, len(boxes))
 
         if debug:
-            boxes = [i['bbox'] for i in all_lines]
-            img = visualize_bbox(images[page_idx], boxes, list(map(str, line_predictions)))
+            img = visualize_bbox(images[page_idx], all_line_boxes, list(map(str, line_predictions)))
             cv2.imwrite(f"{debug_dir}/{page_idx}_order_pred.png", img)
 
         # 6. Calculate block orders based on their lines
-        block2order = get_block_order(block2lines, line_predictions)
+        box_order = [all_line_boxes[i] for i in line_predictions]
+        block2order = {}
+        for block_idx, block_lines in block2lines.items():
+            block2order[block_idx] = []
+            for line in block_lines:
+                line_box = line['bbox']
+                block2order[block_idx].append(box_order.index(line_box))
+        for block_idx, block_order in block2order.items():
+            block2order[block_idx] = median(block_order)
 
         # 7. Create final order result
         page_order_boxes = []
@@ -326,6 +397,6 @@ def elem_batch_ordering(
             page_order_boxes.append(OrderBox(bbox=block.bbox, position=base_position + 999))
 
         # Create page result
-        order_results.append(OrderResult(bboxes=page_order_boxes, image_bbox=[0, 0, page_width, page_height]))
+        order_results.append(OrderResult(bboxes=page_order_boxes, image_bbox=[0, 0, page_w, page_h]))
 
     return order_results
