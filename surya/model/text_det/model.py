@@ -2,7 +2,6 @@ import torch
 from rapidocr_onnxruntime import RapidOCR
 from ultralytics import YOLO
 
-engine = RapidOCR()
 from surya.settings import settings
 
 # def load_model(ckpt=settings.YOLO_DETECTOR_CHECKPOINT) -> YOLO:
@@ -11,7 +10,7 @@ from surya.settings import settings
 #     return layout_det_yolo
 
 
-def load_model():
+def load_pp_model():
     model = RapidOCR()
     print(f"Loaded text detection model {model}")
     return model
