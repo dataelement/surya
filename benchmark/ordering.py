@@ -2,22 +2,27 @@ import argparse
 import collections
 import copy
 import json
+import os
+import time
 
+import cv2
+import datasets
+import numpy as np
+
+from surya.benchmark.metrics import rank_accuracy
 from surya.input.processing import convert_if_not_rgb
 from surya.model.ordering.model import load_model
 from surya.model.ordering.processor import load_processor
 from surya.ordering import batch_ordering
+from surya.postprocessing.visualization import visualize_bbox
 from surya.settings import settings
-from surya.benchmark.metrics import rank_accuracy
-import os
-import time
-import datasets
 
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark surya reading order model.")
     parser.add_argument("--results_dir", type=str, help="Path to JSON file with benchmark results.", default=os.path.join(settings.RESULT_DIR, "benchmark"))
     parser.add_argument("--max", type=int, help="Maximum number of images to run benchmark on.", default=None)
+    parser.add_argument("--debug", action="store_true", help="Run in debug mode.", default=True)
     args = parser.parse_args()
 
     model = load_model()
@@ -40,6 +45,18 @@ def main():
     folder_name = os.path.basename(pathname).split(".")[0]
     result_path = os.path.join(args.results_dir, folder_name)
     os.makedirs(result_path, exist_ok=True)
+    if args.debug:
+        for i, order_pred in enumerate(order_predictions):
+            row = dataset[i]
+            image = row['image']
+            bboxes = row["bboxes"]
+            labels = row["labels"]
+            gt = visualize_bbox(copy.deepcopy(image), bboxes, list(map(str, labels)))
+            pred_bboxes = [pred.bbox for pred in order_pred.bboxes]
+            pred_pos = [pred.position for pred in order_pred.bboxes]
+            pred = visualize_bbox(copy.deepcopy(image), pred_bboxes, list(map(str, pred_pos)))
+            img = np.concatenate([gt, pred], axis=1)
+            cv2.imwrite(f"{result_path}/{i}.png", img)
 
     page_metrics = collections.OrderedDict()
     mean_accuracy = 0
