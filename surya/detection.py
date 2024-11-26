@@ -167,21 +167,26 @@ def text_detection_yolo(images: List, model, batch_size=None, include_maps=False
         #     image,
         #     conf=settings.TEXT_DETECTOR_CONF,
         #     max_det=settings.TEXT_DETECTOR_MAX_DET,
+        #     task='obb',
         #     verbose=False,
         #     save=False,
         #     imgsz=settings.TEXT_DETECTOR_IMGSZ,
         # )
-        preds, elapse = model(image)
 
-        bboxes = []
+        # bboxes = []
         # for pred in preds:
-        #     polygons = pred.obb.xyxyxyxy
+        #     # Convert polygon coordinates to integer type
+        #     polygons = pred.obb.xyxyxyxy.cpu().numpy().astype(int)
         #     confs = pred.obb.conf.tolist()
         #     for polygon, conf in zip(polygons, confs):
-        #         polygon[[0, 2]] = polygon[[2, 0]]
         #         bboxes.append(PolygonBox(polygon=polygon, confidence=conf))
+
+        preds, elapse = model(image)
+        bboxes = []
         for pred in preds:
-            bboxes.append(PolygonBox(polygon=pred[0], confidence=pred[2]))
+            bboxes.append(
+                PolygonBox(polygon=np.array(pred[0], dtype=np.int32).tolist(), text=pred[1], confidence=pred[2])
+            )
 
         vertical_lines = []
         heat_img = None
