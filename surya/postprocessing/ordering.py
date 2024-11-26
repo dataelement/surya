@@ -178,7 +178,7 @@ def create_virtual_lines(
             else:
                 # 检查长宽比，大于1.2认为是细长型
                 if block_height / block_weight > 1.2:
-                    return [[x0, y0, x1, y1]]  # 细长的区块不划分
+                    return [{'bbox': [x0, y0, x1, y1], 'spans': []}]  # 细长的区块不划分
                 else:
                     line_height = (y1 - y0) / 2  # 强制分成2行
                     lines = 2
@@ -200,34 +200,14 @@ def create_virtual_lines(
 
 def assign_spans_to_blocks(blocks: List[LayoutBox], spans: List[PolygonBox]) -> Dict[int, List[PolygonBox]]:
     """Assign text detection spans to layout blocks based on intersection."""
-    block2spans = defaultdict(list)
+    block2spans = dict()
     used_spans = set()
 
     for block_idx, block in enumerate(blocks):
+        block2spans[block_idx] = []
         for span_idx, span in enumerate(spans):
             if span_idx not in used_spans and span.intersection_pct(block) > 0.5:
                 block2spans[block_idx].append(span)
                 used_spans.add(span_idx)
 
     return block2spans
-
-
-def get_block_order(block_lines: Dict[int, List[TextLine]], line_predictions: List[int]) -> Dict[int, float]:
-    """Calculate median order for each block based on its lines' predictions."""
-    block2order = {}
-    current_idx = 0
-
-    line_cnt = 0
-    for block_idx, lines in block_lines.items():
-        block_line_count = len(lines)
-        line_cnt += block_line_count
-        if block_line_count == 0:
-            continue
-
-        block_predictions = line_predictions[current_idx : current_idx + block_line_count]
-        block2order[block_idx] = median(block_predictions)
-        current_idx += block_line_count
-
-    assert line_cnt == len(line_predictions)
-
-    return block2order
