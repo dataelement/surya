@@ -9,6 +9,7 @@ from surya.postprocessing.util import rescale_bbox
 class PolygonBox(BaseModel):
     polygon: List[List[float]]
     confidence: Optional[float] = None
+    text: Optional[str] = None
 
     @field_validator('polygon')
     @classmethod
@@ -36,11 +37,11 @@ class PolygonBox(BaseModel):
     @computed_field
     @property
     def bbox(self) -> List[float]:
-        box = [self.polygon[0][0], self.polygon[0][1], self.polygon[1][0], self.polygon[2][1]]
-        if box[0] > box[2]:
-            box[0], box[2] = box[2], box[0]
-        if box[1] > box[3]:
-            box[1], box[3] = box[3], box[1]
+        box = [self.polygon[0][0], self.polygon[0][1], self.polygon[2][0], self.polygon[2][1]]
+        # if box[0] > box[2]:
+        #     box[0], box[2] = box[2], box[0]
+        # if box[1] > box[3]:
+        #     box[1], box[3] = box[3], box[1]
         return box
 
     def rescale(self, processor_size, image_size):
