@@ -6,7 +6,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from rapidocr_paddle import RapidOCR
 from tqdm import tqdm
+from ultralytics import YOLO
 
 from surya.input.processing import (
     get_total_splits,
@@ -163,30 +165,34 @@ def batch_text_detection(
 def text_detection_yolo(images: List, model, batch_size=None, include_maps=False) -> List[TextDetectionResult]:
     results = []
     for image in tqdm(images, desc="Detecting bboxes"):
-        # preds = model.predict(
-        #     image,
-        #     conf=settings.TEXT_DETECTOR_CONF,
-        #     max_det=settings.TEXT_DETECTOR_MAX_DET,
-        #     task='obb',
-        #     verbose=False,
-        #     save=False,
-        #     imgsz=settings.TEXT_DETECTOR_IMGSZ,
-        # )
-
-        # bboxes = []
-        # for pred in preds:
-        #     # Convert polygon coordinates to integer type
-        #     polygons = pred.obb.xyxyxyxy.cpu().numpy().astype(int)
-        #     confs = pred.obb.conf.tolist()
-        #     for polygon, conf in zip(polygons, confs):
-        #         bboxes.append(PolygonBox(polygon=polygon, confidence=conf))
-
-        preds, elapse = model(image)
-        bboxes = []
-        for pred in preds:
-            bboxes.append(
-                PolygonBox(polygon=np.array(pred[0], dtype=np.int32).tolist(), text=pred[1], confidence=pred[2])
+        if isinstance(model, YOLO):
+            preds = model.predict(
+                image,
+                conf=settings.TEXT_DETECTOR_CONF,
+                max_det=settings.TEXT_DETECTOR_MAX_DET,
+                task='obb',
+                verbose=False,
+                save=False,
+                imgsz=settings.TEXT_DETECTOR_IMGSZ,
             )
+
+            bboxes = []
+            for pred in preds:
+                # Convert polygon coordinates to integer type
+                polygons = pred.obb.xyxyxyxy.cpu().numpy().astype(int)
+                confs = pred.obb.conf.tolist()
+                for polygon, conf in zip(polygons, confs):
+                    bboxes.append(PolygonBox(polygon=polygon, confidence=conf))
+        elif isinstance(model, RapidOCR):
+            preds, elapse = model(image, use_cls=False, use_rec=False, use_cuda=True)
+            bboxes = []
+            for pred in preds:
+                # bboxes.append(
+                #     PolygonBox(polygon=np.array(pred[0], dtype=np.int32).tolist(), text=pred[1], confidence=pred[2])
+                # )
+                bboxes.append(PolygonBox(polygon=pred, text='x', confidence=1.0))
+        else:
+            raise ValueError(f"Unknown model type: {type(model)}")
 
         vertical_lines = []
         heat_img = None
