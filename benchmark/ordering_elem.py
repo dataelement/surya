@@ -37,12 +37,13 @@ from surya.settings import settings
 def get_dummy_layout_result(dataset):
     results = []
     for i, row in enumerate(dataset):
-        # breakpoint()
-
         image = row["image"]
         bboxes = row["bboxes"]
         polygons = [np.array(xyxy2xyxyxyxy(bbox), dtype=np.float32).reshape(4, 2).tolist() for bbox in bboxes]
-        layout_boxes = [LayoutBox(polygon=polygon, confidence=1.0, label='Text') for polygon in polygons]
+        unique_polygons = np.unique(polygons, axis=0)
+        layout_boxes = [
+            LayoutBox(polygon=polygon.tolist(), confidence=1.0, label='Text') for polygon in unique_polygons
+        ]
         results.append(
             LayoutResult(
                 bboxes=layout_boxes, segmentation_map=None, heatmaps=None, image_bbox=[0, 0, image.width, image.height]

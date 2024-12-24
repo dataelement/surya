@@ -18,7 +18,6 @@ from surya.model.ordering.encoderdecoder import OrderVisionEncoderDecoderModel
 from surya.postprocessing.ordering import (
     assign_spans_to_blocks,
     create_virtual_lines,
-    get_block_order,
     merge_spans_to_lines,
     sort_spans_horizontally,
 )
@@ -203,7 +202,6 @@ def elem_batch_ordering(
     assert all([isinstance(image, Image.Image) for image in images])
     assert len(images) == len(text_det_results)
 
-    filter_block_labels = {'Page-footer', 'Page-header'}
     order_results = []
 
     if debug:
@@ -226,15 +224,7 @@ def elem_batch_ordering(
             print(f"Saved layout to {debug_dir}/{page_idx}_layout.png")
 
         # 1. Split blocks into valid and invalid
-        valid_blocks = []
-        invalid_blocks = []
-        for block in layout_result.bboxes:
-            block_label = block.label
-            if block_label in filter_block_labels:
-                invalid_blocks.append(block)
-            else:
-                valid_blocks.append(block)
-
+        valid_blocks = [block for block in layout_result.bboxes]
         if not valid_blocks:
             continue
 
@@ -305,7 +295,7 @@ def elem_batch_ordering(
             _line_heights.extend([line['bbox'][3] - line['bbox'][1] for line in block_lines])
         median_line_height = median(_line_heights) if _line_heights else 10
 
-        # 5. Create virtual lines for table, picture, and figure blocks
+        # 4. Create virtual lines for table, picture, and figure blocks
         all_line_boxes: List[Dict] = []
         for block_idx, block_lines in block2lines.items():
             current_block = valid_blocks[block_idx]
@@ -323,7 +313,7 @@ def elem_batch_ordering(
             debug_image = visualize_bbox(images[page_idx], all_line_boxes, ['all_lines'] * len(all_line_boxes))
             cv2.imwrite(f"{debug_dir}/{page_idx}_all_lines.png", debug_image)
 
-        # 6. Prepare lines for reading order model
+        # 5. Prepare lines for reading order model
         page_w, page_h = layout_result.image_bbox[2:]
 
         x_scale = 1000.0 / page_w
@@ -362,7 +352,7 @@ def elem_batch_ordering(
             ), f'Invalid box. right: {right}, left: {left}, bottom: {bottom}, top: {top}'  # noqa: E126, E121
             boxes.append([left, top, right, bottom])
 
-        # 5. Get reading order predictions
+        # 6. Get reading order predictions
         inputs = boxes2inputs(boxes)
         inputs = prepare_inputs(inputs, model)
         logits = model(**inputs).logits.cpu().squeeze(0)
@@ -372,29 +362,25 @@ def elem_batch_ordering(
             img = visualize_bbox(images[page_idx], all_line_boxes, list(map(str, line_predictions)))
             cv2.imwrite(f"{debug_dir}/{page_idx}_order_pred.png", img)
 
-        # 6. Calculate block orders based on their lines
+        # 7. Calculate block orders based on their lines
         box_order = [all_line_boxes[i] for i in line_predictions]
-        block2order = {}
+        block2order = defaultdict(list)
         for block_idx, block_lines in block2lines.items():
-            block2order[block_idx] = []
             for line in block_lines:
                 line_box = line['bbox']
                 block2order[block_idx].append(box_order.index(line_box))
         for block_idx, block_order in block2order.items():
             block2order[block_idx] = median(block_order)
 
-        # 7. Create final order result
+        sorted_block2order = sorted(block2order.items(), key=lambda x: x[1])
+        order_mapping = {i: idx for idx, (i, _) in enumerate(sorted_block2order)}
+
+        # 8. Create final order result
         page_order_boxes = []
 
         # Add valid blocks with their calculated order
-        ordered_block_ids = sorted(block2order.keys(), key=lambda x: block2order[x])
-        for order_idx, block_idx in enumerate(ordered_block_ids):
-            page_order_boxes.append(OrderBox(bbox=valid_blocks[block_idx].bbox, position=order_idx))
-
-        # Add invalid blocks at the end
-        base_position = len(ordered_block_ids)
-        for idx, block in enumerate(invalid_blocks):
-            page_order_boxes.append(OrderBox(bbox=block.bbox, position=base_position + 999))
+        for block_idx, block in enumerate(valid_blocks):
+            page_order_boxes.append(OrderBox(bbox=block.bbox, position=order_mapping[block_idx]))
 
         # Create page result
         order_results.append(OrderResult(bboxes=page_order_boxes, image_bbox=[0, 0, page_w, page_h]))
